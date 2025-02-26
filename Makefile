@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c11
 LDFLAGS = -lSDL2 -lSDL2_ttf
 TARGET = order_book
-SRC = order_book.c
+SRC = order_book.c GUI.c
 
 all: $(TARGET)
 

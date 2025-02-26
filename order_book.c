@@ -1,24 +1,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
+#include <math.h>
+#include "GUI.h"
 
-// Order book
-typedef struct {
-    double price;
-    int sell_orders;
-    int buy_orders;
-} OrderBook;
-
-// Function to resize the order book array
+// Resize order book array
 OrderBook** resize_order_book(OrderBook** order_book, int* size) {
     *size *= 2;
     order_book = (OrderBook**)realloc(order_book, (*size) * sizeof(OrderBook*));
     return order_book;
 }
 
-// Function to compare two orders by price
+// Compare orders, used for sorting
 int compare_orders(const void* a, const void* b) {
     OrderBook* orderA = *(OrderBook**)a;
     OrderBook* orderB = *(OrderBook**)b;
@@ -27,59 +20,31 @@ int compare_orders(const void* a, const void* b) {
     return 0;
 }
 
-// Function to plot order book using SDL2
-void plot_order_book(OrderBook** order_book, SDL_Renderer* ren, TTF_Font* font) {
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-    SDL_RenderClear(ren);
-
-    int width, height;
-    SDL_GetWindowSize(SDL_GetWindowFromID(1), &width, &height);
-
-    int bar_height = 20;
-    int bar_spacing = 10;
-    int y_offset = 50;
-
-    // Plot buy orders
-    SDL_SetRenderDrawColor(ren, 0, 255, 0, 255);
-    for (int i = 0; order_book[i] != NULL; i++) {
-        if (order_book[i]->buy_orders > 0) {
-            int y = y_offset + i * (bar_height + bar_spacing);
-            int bar_width = (int)((order_book[i]->buy_orders / 100.0) * (width / 2));
-            SDL_Rect rect = { width / 2 - bar_width, y, bar_width, bar_height };
-            SDL_RenderFillRect(ren, &rect);
-        }
+// Function to generate a random number following a normal distribution
+double generate_normal(double mean, double stddev) {
+    static int has_spare = 0;
+    static double spare;
+    if (has_spare) {
+        has_spare = 0;
+        return mean + stddev * spare;
     }
 
-    // Plot sell orders
-    SDL_SetRenderDrawColor(ren, 255, 0, 0, 255);
-    for (int i = 0; order_book[i] != NULL; i++) {
-        if (order_book[i]->sell_orders > 0) {
-            int y = y_offset + i * (bar_height + bar_spacing);
-            int bar_width = (int)((order_book[i]->sell_orders / 100.0) * (width / 2));
-            SDL_Rect rect = { width / 2, y, bar_width, bar_height };
-            SDL_RenderFillRect(ren, &rect);
-        }
-    }
+    has_spare = 1;
+    static double u, v, s;
+    do {
+        u = (rand() / ((double)RAND_MAX)) * 2.0 - 1.0;
+        v = (rand() / ((double)RAND_MAX)) * 2.0 - 1.0;
+        s = u * u + v * v;
+    } while (s >= 1.0 || s == 0.0);
 
-    // Display prices
-    SDL_Color textColor = { 255, 255, 255, 255 };
-    for (int i = 0; order_book[i] != NULL; i++) {
-        int y = y_offset + i * (bar_height + bar_spacing) + bar_height / 2;
-        char price_text[20];
-        snprintf(price_text, sizeof(price_text), "%.2f", order_book[i]->price);
-        SDL_Surface* textSurface = TTF_RenderText_Solid(font, price_text, textColor);
-        SDL_Texture* texture = SDL_CreateTextureFromSurface(ren, textSurface);
-        SDL_Rect dstrect = { width / 2 - 50, y - 15, 100, 30 };
-        SDL_RenderCopy(ren, texture, NULL, &dstrect);
-        SDL_FreeSurface(textSurface);
-        SDL_DestroyTexture(texture);
-    }
-
-    SDL_RenderPresent(ren);
+    s = sqrt(-2.0 * log(s) / s);
+    spare = v * s;
+    return mean + stddev * u * s;
 }
 
 // Receive order and add to current order book
-void input_order(OrderBook*** order_book, int* size, char direction, double price, int quantity, SDL_Renderer* ren, TTF_Font* font) {
+void input_order(OrderBook*** order_book, int* size, char direction, double price, int quantity) {
+    price = round(price); // Round price to the nearest integer
     for (int i = 0; (*order_book)[i] != NULL; i++) {
         if ((*order_book)[i]->price == price) {
             // Add order
@@ -88,7 +53,6 @@ void input_order(OrderBook*** order_book, int* size, char direction, double pric
             } else if (direction == 'S') {
                 (*order_book)[i]->sell_orders += quantity;
             }
-            plot_order_book(*order_book, ren, font);
             return;
         }
     }
@@ -108,15 +72,38 @@ void input_order(OrderBook*** order_book, int* size, char direction, double pric
         (*order_book)[i]->buy_orders = 0;
     }
     (*order_book)[i + 1] = NULL;
-    plot_order_book(*order_book, ren, font);
+}
+
+// Function to remove an order from the market
+void remove_order(OrderBook*** order_book, char direction, double price, int quantity) {
+    price = round(price); // Round price to the nearest integer
+    for (int i = 0; (*order_book)[i] != NULL; i++) {
+        if ((*order_book)[i]->price == price) {
+            // Remove order
+            if (direction == 'B') {
+                (*order_book)[i]->buy_orders -= quantity;
+                if ((*order_book)[i]->buy_orders < 0) {
+                    (*order_book)[i]->buy_orders = 0;
+                }
+            } else if (direction == 'S') {
+                (*order_book)[i]->sell_orders -= quantity;
+                if ((*order_book)[i]->sell_orders < 0) {
+                    (*order_book)[i]->sell_orders = 0;
+                }
+            }
+            return;
+        }
+    }
 }
 
 // Add a main function
 int main() {
     // Initialize order book
-    int size = 10;
+    int size = 20;
     OrderBook** order_book = (OrderBook**)malloc(size * sizeof(OrderBook*));
-    order_book[0] = NULL;
+    for (int i = 0; i < size; i++) {
+        order_book[i] = NULL;
+    }
 
     // Seed random number generator
     srand(time(NULL));
@@ -160,22 +147,26 @@ int main() {
         return 1;
     }
 
-    // Randomly add buy orders in the price interval 98-103
-    for (double price = 98.0; price <= 103.0; price += 1) {
-        int quantity = rand() % 100 + 1; // Random quantity between 1 and 100
-        input_order(&order_book, &size, 'B', price, quantity, ren, font);
+    // Initialize order book with prices from 95 to 105 with 0 buy/sell orders
+    for (double price = 95.0; price <= 105.0; price += 1.0) {
+        input_order(&order_book, &size, 'B', price, 0);
     }
 
-    // Randomly add sell orders in the price interval 102-107
-    for (double price = 102.0; price <= 107.0; price += 1) {
+    // Create 1,000 orders before displaying the plot
+    for (int i = 0; i < 1000; i++) {
+        char direction = (rand() % 2 == 0) ? 'B' : 'S';
+        double mean = (direction == 'B') ? 99.0 : 101.0;
+        double price = generate_normal(mean, 2.0);
+        if (price < 95.0) price = 95.0;
+        if (price > 105.0) price = 105.0;
         int quantity = rand() % 100 + 1; // Random quantity between 1 and 100
-        input_order(&order_book, &size, 'S', price, quantity, ren, font);
+        input_order(&order_book, &size, direction, price, quantity);
     }
 
-    // Sort order book by price
-    int num_orders = 0;
-    while (order_book[num_orders] != NULL) num_orders++;
-    qsort(order_book, num_orders, sizeof(OrderBook*), compare_orders);
+    // Resize window height to fit columns
+    int num_prices = 11;
+    int new_height = 50 + num_prices * (20 + 10) + 50; // y_offset + num_prices * (bar_height + bar_spacing) + bottom margin
+    SDL_SetWindowSize(win, 800, new_height);
 
     // Plot order book
     plot_order_book(order_book, ren, font);
@@ -188,6 +179,29 @@ int main() {
                 quit = 1;
             }
         }
+
+        // Simulate the arrival of new orders
+        char direction = (rand() % 2 == 0) ? 'B' : 'S';
+        char add_remove = (rand() %2 == 0) ? 'A' : 'R';
+        double mean = (direction == 'B') ? 99.0 : 101.0;
+        double price = generate_normal(mean, 1.0);
+        int quantity = rand() % 100 + 1; // Random quantity between 1 and 100
+        if (direction == 'B') {
+            if (price < 96.0) price = 96.0;
+            if (price > 103.0) price = 103.0;
+        } else {
+            if (price < 98.0) price = 98.0;
+            if (price > 104.0) price = 104.0;
+        }
+        if (add_remove == 'A') {
+            input_order(&order_book, &size, direction, price, quantity);
+        }
+        else {
+            remove_order(&order_book, direction, price, quantity);
+        }
+
+        plot_order_book(order_book, ren, font);
+        SDL_Delay(10); // Delay to simulate time between orders
     }
 
     TTF_CloseFont(font);
